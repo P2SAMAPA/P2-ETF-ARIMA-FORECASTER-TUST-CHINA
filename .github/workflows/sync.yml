@@ -1,0 +1,25 @@
+name: Sync to HuggingFace Space
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  sync-to-hub:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+          lfs: true
+
+      - name: Push to HuggingFace Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          git config --global user.email "sync@github.com"
+          git config --global user.name "GitHub Sync"
+          git remote add hf https://user:$HF_TOKEN@huggingface.co/spaces/P2SAMAPA/P2-ETF-ARIMA-FORECASTER-TUST-CHINA
+          git push hf main --force
