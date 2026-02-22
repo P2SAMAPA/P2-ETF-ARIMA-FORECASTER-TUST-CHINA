@@ -1,8 +1,6 @@
 """
 components.py
-Streamlit UI components for P2-ETF-ARIMA-FORECASTER.
-Shows: signal banner, per-ETF ARIMA scores table,
-       hold period rationale, metrics row, audit trail.
+All Streamlit UI components — shared between Option A and Option B.
 """
 
 import streamlit as st
@@ -40,7 +38,7 @@ def show_signal_banner(etf: str, hold_period: int, next_date,
                 text-align:center; box-shadow:0 8px 16px rgba(0,0,0,0.3); margin:16px 0;">
       <div style="color:rgba(255,255,255,0.7); font-size:12px;
                   letter-spacing:3px; margin-bottom:6px;">
-        ARIMA FORECASTER · NEXT TRADING DAY SIGNAL
+        P2-ETF FORECASTER · NEXT TRADING DAY SIGNAL
       </div>
       <h1 style="color:white; font-size:40px; margin:0 0 8px 0; font-weight:800;">
         {label}
@@ -53,7 +51,7 @@ def show_signal_banner(etf: str, hold_period: int, next_date,
 def show_etf_scores_table(scores: dict, arima_results: dict,
                            run_scores: dict, active_etfs: list,
                            hold_periods: list, fee_bps: int):
-    st.subheader("📊 ETF Signal Breakdown")
+    st.subheader("📊 ETF Signal Breakdown — Option A")
     st.caption(f"Transaction cost: **{fee_bps} bps** applied to net scores")
 
     rows = []
@@ -81,7 +79,7 @@ def show_etf_scores_table(scores: dict, arima_results: dict,
 
     def _highlight_best(row):
         try:
-            vals = [float(r[f"1d Score"]) for r in rows]
+            vals = [float(r["1d Score"]) for r in rows]
             if float(row["1d Score"]) == max(vals):
                 return ["background-color: rgba(0,200,150,0.15); font-weight:bold"] * len(row)
         except Exception:
@@ -110,7 +108,7 @@ def show_hold_period_rationale(best_etf: str, best_h: int,
 
     st.caption(
         f"**Hold Period Selection for {best_etf}** "
-        f"(fee = {fee_bps} bps amortised — higher hold = lower relative cost):"
+        f"(fee = {fee_bps} bps — higher hold = lower relative cost):"
     )
     cols = st.columns(len(hold_periods))
     for col, h in zip(cols, hold_periods):
@@ -175,7 +173,7 @@ def show_audit_trail(audit_trail: list):
 
     cols = [c for c in ["Date", "Signal", "Hold", "Net_Return", "In_Cash"]
             if c in df.columns]
-    df   = df[cols]
+    df = df[cols]
 
     def _color_ret(val):
         return ("color: #00c896; font-weight:bold" if val > 0
@@ -212,7 +210,7 @@ def show_audit_trail_b(audit_trail: list):
 
     cols = [c for c in ["Date", "Signal", "Score", "Net_Return", "In_Cash"]
             if c in df.columns]
-    df   = df[cols]
+    df = df[cols]
 
     def _color_ret(val):
         return ("color: #00c896; font-weight:bold" if val > 0
@@ -235,8 +233,8 @@ def show_audit_trail_b(audit_trail: list):
 
 def show_momentum_scores_table(momentum_scores: dict, active_etfs: list,
                                 current_etf: str):
-    """Show per-ETF momentum breakdown: 1m, 3m, 6m and composite score."""
-    st.subheader("📊 ETF Momentum Rankings")
+    """Option B — per-ETF momentum breakdown: 1m, 3m, 6m and composite score."""
+    st.subheader("📊 ETF Momentum Rankings — Option B")
     st.caption("Composite score = equal-weight average of 1m / 3m / 6m trailing returns")
 
     rows = []
@@ -251,7 +249,6 @@ def show_momentum_scores_table(momentum_scores: dict, active_etfs: list,
             "Rank":      "",
         })
 
-    # Sort by composite score
     rows = sorted(rows, key=lambda x: x["Composite"], reverse=True)
     for i, row in enumerate(rows):
         row["Rank"] = f"#{i+1} {'⭐ SELECTED' if row['ETF'] == current_etf else ''}"
@@ -289,28 +286,3 @@ def show_momentum_scores_table(momentum_scores: dict, active_etfs: list,
         ])
     )
     st.dataframe(styled, use_container_width=True)
-            df["In_Cash"] = df["In_Cash"].map({True: "🛡️ CASH", False: ""})
-        else:
-            df = df.drop(columns=["In_Cash"])
-
-    cols = [c for c in ["Date", "Signal", "Hold", "Net_Return", "In_Cash"]
-            if c in df.columns]
-    df   = df[cols]
-
-    def _color_ret(val):
-        return ("color: #00c896; font-weight:bold" if val > 0
-                else "color: #ff4b4b; font-weight:bold")
-
-    styled = (
-        df.style
-        .map(_color_ret, subset=["Net_Return"])
-        .format({"Net_Return": "{:.2%}"})
-        .set_properties(**{"font-size": "14px", "text-align": "center"})
-        .set_table_styles([
-            {"selector": "th", "props": [("font-size", "13px"),
-                                          ("font-weight", "bold"),
-                                          ("text-align", "center")]},
-            {"selector": "td", "props": [("padding", "10px")]},
-        ])
-    )
-    st.dataframe(styled, use_container_width=True, height=500)
