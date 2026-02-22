@@ -15,7 +15,7 @@ import pytz
 try:
     import pandas_market_calendars as mcal
     NYSE_CAL_AVAILABLE = True
-except ImportError:
+except Exception:
     NYSE_CAL_AVAILABLE = False
 
 DATASET_REPO   = "P2SAMAPA/fi-etf-macro-signal-master-data"
