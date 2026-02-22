@@ -31,7 +31,8 @@ from option_a_selector         import (execute_backtest, select_signal,
 
 # ── Option B modules ──────────────────────────────────────────────────────────
 from option_b_momentum import (execute_backtest_b, compute_momentum_scores,
-                                select_top_etf, LOOKBACK_6M)
+                                select_top_etf, LOOKBACK_6M,
+                                _all_lookbacks_positive)
 
 st.set_page_config(
     page_title="P2-ETF Forecaster",
@@ -77,7 +78,20 @@ with st.sidebar:
 
     st.divider()
 
-    start_yr = st.slider("📅 Start Year", 2008, 2025, 2015)
+    start_yr = None
+    if option == "Option A — ARIMA Forecaster":
+        start_yr = st.slider("📅 Start Year", 2008, 2025, 2015)
+
+    if option == "Option B — Momentum Rotation":
+        lookback_months = st.select_slider(
+            "📅 Momentum Lookback",
+            options=[1, 3, 6, 9, 12],
+            value=6,
+            format_func=lambda x: f"{x} month{'s' if x > 1 else ''}",
+        )
+        st.caption("Ranks ETFs by trailing return over selected period")
+    else:
+        lookback_months = 6
     fee_bps  = st.select_slider(
         "💰 Transaction Cost (bps)",
         options=list(range(0, 105, 5)),
@@ -156,7 +170,8 @@ if run_button:
     st.session_state.option       = option
 
     with st.spinner("🔧 Preparing data..."):
-        df, availability, active_etfs, tbill_rate = prepare_data(df_raw, start_yr)
+        effective_start = start_yr if option == "Option A — ARIMA Forecaster" else 2008
+        df, availability, active_etfs, tbill_rate = prepare_data(df_raw, effective_start)
 
     show_availability_warnings(availability)
 
@@ -258,8 +273,8 @@ if run_button:
     # OPTION B — MOMENTUM
     # ═══════════════════════════════════════════════════════════════
     else:
-        cache_key   = make_cache_key(last_date_str, start_yr, fee_bps,
-                                      "80/10/10_B", 0)
+        cache_key   = make_cache_key(last_date_str, 2008, fee_bps,
+                                      "80/10/10_B", lookback_months)
         cached_data = load_cache(cache_key)
 
         if cached_data is not None:
@@ -267,17 +282,25 @@ if run_button:
             st.success("⚡ Results from cache.")
         else:
             with st.spinner("⏳ Running cross-sectional momentum backtest on OOS..."):
+                # Convert months to trading days
+                lb_days = lookback_months * 21
                 result = execute_backtest_b(
                     df=df, active_etfs=active_etfs,
-                    test_slice=test_slice, lookback=LOOKBACK_6M,
+                    test_slice=test_slice, lookback=lb_days,
                     fee_bps=fee_bps, tbill_rate=tbill_rate,
                 )
             save_cache(cache_key, {"result": result})
 
         with st.spinner("🔮 Computing next-day momentum signal..."):
-            mom_scores           = compute_momentum_scores(df, active_etfs, len(df))
+            lb_days  = lookback_months * 21
+            lb_long  = lb_days
+            lb_mid   = max(lb_days // 2, 5)
+            lb_short = max(lb_days // 4, 3)
+            mom_scores           = compute_momentum_scores(
+                df, active_etfs, len(df), lb_short, lb_mid, lb_long,
+            )
             best_etf, best_score = select_top_etf(mom_scores)
-            in_cash_live         = best_score <= 0
+            in_cash_live         = not _all_lookbacks_positive(mom_scores, best_etf)
             signal = {
                 "etf":         "CASH" if in_cash_live else best_etf,
                 "hold_period": 1,
