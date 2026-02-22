@@ -132,12 +132,12 @@ def compute_zscore(df: pd.DataFrame, etf: str, as_of_idx: int,
 def should_exit_cash(df: pd.DataFrame, best_etf: str, as_of_idx: int,
                      momentum_scores: dict) -> bool:
     """
-    Exit CASH only when BOTH conditions are met:
-    1. Top ETF has positive returns on all 3 lookbacks (trend confirmed)
-    2. Top ETF Z-score >= 1.2 (momentum is statistically strong, not just slightly positive)
+    Exit CASH when top ETF Z-score >= 1.2 (recent daily return is statistically strong).
+    We use Z-score only — NOT trailing price returns — because after a crash the
+    1m/3m trailing price return stays negative for weeks even as the ETF recovers.
+    Z-score looks at recent DAILY return vs rolling 63-day mean/std, so it reacts
+    within days of a genuine recovery.
     """
-    if not _all_lookbacks_positive(momentum_scores, best_etf):
-        return False
     z = compute_zscore(df, best_etf, as_of_idx)
     return z >= ZSCORE_EXIT_THRESHOLD
 
