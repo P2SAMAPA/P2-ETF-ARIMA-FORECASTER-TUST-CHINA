@@ -19,7 +19,7 @@ from components import (show_freshness_status, show_availability_warnings,
                          show_signal_banner, show_metrics_row,
                          show_audit_trail, show_audit_trail_b,
                          show_etf_scores_table, show_hold_period_rationale,
-                         show_momentum_scores_table)
+                         show_momentum_scores_table, show_methodology)
 
 st.set_page_config(
     page_title="P2-ETF Forecaster",
@@ -415,3 +415,7 @@ if current_option == "Option A — ARIMA Forecaster":
     show_audit_trail(result.get("audit_trail", []))
 else:
     show_audit_trail_b(result.get("audit_trail", []))
+
+# ── Methodology (Option B only) ───────────────────────────────────────────────
+if current_option == "Option B — Momentum Rotation":
+    show_methodology()
