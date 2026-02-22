@@ -9,7 +9,7 @@ import pickle
 from pathlib import Path
 
 CACHE_DIR     = Path("/tmp/p2_arima_cache")
-CACHE_VERSION = "v4"  # bumped: CASH logic verified + Z-score exit condition
+CACHE_VERSION = "v5"  # bumped: CASH exit uses Z-score only, not trailing price returns
 CACHE_DIR.mkdir(exist_ok=True)
 
 
