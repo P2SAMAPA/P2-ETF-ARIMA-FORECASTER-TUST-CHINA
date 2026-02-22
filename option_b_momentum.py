@@ -244,6 +244,7 @@ def execute_backtest_b(df: pd.DataFrame,
         "audit_trail":     audit_trail,
         "current_etf":     current_etf,
         "momentum_scores": mom_scores,
+        "ended_in_cash":   in_cash,   # pass final CASH state to live signal
     }
 
 
