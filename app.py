@@ -303,9 +303,19 @@ if run_button:
                 df, active_etfs, len(df), lb_short, lb_mid, lb_long,
             )
             best_etf, best_score = select_top_etf(mom_scores)
-            in_cash_live         = not should_exit_cash(df, best_etf, len(df), mom_scores)
+
+            # Inherit CASH state from end of backtest, then check if we can exit
+            backtest_ended_in_cash = result.get("ended_in_cash", False)
+            if backtest_ended_in_cash:
+                # Still in CASH from backtest — only exit if Z-score >= 1.2
+                in_cash_live = not should_exit_cash(df, best_etf, len(df), mom_scores)
+            else:
+                # Not in CASH — check if today's 2-day return triggers entry
+                in_cash_live = False
+
             signal = {
                 "etf":         "CASH" if in_cash_live else best_etf,
+                "next_etf":    best_etf,
                 "hold_period": 1,
                 "net_score":   best_score,
                 "in_cash":     in_cash_live,
@@ -358,6 +368,7 @@ show_signal_banner(
     next_date=next_date,
     net_score=signal["net_score"],
     in_cash=signal["in_cash"],
+    next_etf=signal.get("next_etf", signal["etf"]),
 )
 
 st.divider()
