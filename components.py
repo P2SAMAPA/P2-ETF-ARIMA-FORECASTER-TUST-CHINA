@@ -159,6 +159,43 @@ def show_metrics_row(result: dict, tbill_rate: float, spy_ann: float = None):
     c5.metric("⚠️ Max Daily DD",  f"{result['max_daily_dd']*100:.2f}%", delta=dd_delta)
 
 
+def show_audit_trail(audit_trail: list):
+    """Option A audit trail — shows Hold period column."""
+    if not audit_trail:
+        st.info("No audit trail data available.")
+        return
+
+    df = pd.DataFrame(audit_trail).tail(20)
+
+    if "In_Cash" in df.columns:
+        if df["In_Cash"].any():
+            df["In_Cash"] = df["In_Cash"].map({True: "🛡️ CASH", False: ""})
+        else:
+            df = df.drop(columns=["In_Cash"])
+
+    cols = [c for c in ["Date", "Signal", "Hold", "Net_Return", "In_Cash"]
+            if c in df.columns]
+    df   = df[cols]
+
+    def _color_ret(val):
+        return ("color: #00c896; font-weight:bold" if val > 0
+                else "color: #ff4b4b; font-weight:bold")
+
+    styled = (
+        df.style
+        .map(_color_ret, subset=["Net_Return"])
+        .format({"Net_Return": "{:.2%}"})
+        .set_properties(**{"font-size": "14px", "text-align": "center"})
+        .set_table_styles([
+            {"selector": "th", "props": [("font-size", "13px"),
+                                          ("font-weight", "bold"),
+                                          ("text-align", "center")]},
+            {"selector": "td", "props": [("padding", "10px")]},
+        ])
+    )
+    st.dataframe(styled, use_container_width=True, height=500)
+
+
 def show_audit_trail_b(audit_trail: list):
     """Option B audit trail — shows momentum Score instead of Hold period."""
     if not audit_trail:
