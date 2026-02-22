@@ -1,3 +1,15 @@
+---
+title: P2-ETF-ARIMA-FORECASTER-TUST-CHINA
+emoji: 📈
+colorFrom: green
+colorTo: blue
+sdk: streamlit
+sdk_version: "1.32.0"
+python_version: "3.10"
+app_file: app.py
+pinned: false
+---
+
 # P2-ETF-ARIMA-FORECASTER-TUST-CHINA
 
 Quantitative ETF trading strategy based on:
@@ -24,23 +36,17 @@ Quantitative ETF trading strategy based on:
 | Auto-lookback | 30 / 45 / 60d (selected by val MAE) |
 | Hold periods | 1d / 3d / 5d |
 
-## Setup
-```bash
-pip install -r requirements.txt
-streamlit run app.py
-```
-
-Set `HF_TOKEN` as an environment variable or HF Space secret.
-
 ## File Structure
 ```
-├── app.py                  # Main Streamlit app
-├── loader.py               # HF Dataset loader, ETF availability checks
-├── arima_forecaster.py     # Rolling ARIMA, auto order selection, forecasts
-├── run_analysis.py         # Consecutive run stats, reversal pressure scoring
-├── selector.py             # ETF+hold scoring, CASH overlay, walk-forward backtest
-├── components.py           # All Streamlit UI components
-├── cache.py                # MD5 cache helpers
+├── app.py
+├── loader.py
+├── arima_forecaster.py
+├── run_analysis.py
+├── selector.py
+├── components.py
+├── cache.py
 ├── requirements.txt
 └── README.md
 ```
+
+Set `HF_TOKEN` as a secret in HF Space settings.
