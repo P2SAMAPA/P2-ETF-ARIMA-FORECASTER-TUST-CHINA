@@ -21,7 +21,112 @@ import numpy as np
 import pandas as pd
 from datetime import datetime
 
-CASH_DRAWDOWN_TRIGGER = -0.15
+CASH_DRAWDOWN_TRIGGER = -0.10   # tightened from -15% to -10% two-day
+
+
+def execute_backtest_b(df: pd.DataFrame,
+                       active_etfs: list,
+                       test_slice: slice,
+                       lookback: int,
+                       fee_bps: int,
+                       tbill_rate: float) -> dict:
+    """
+    Walk-forward backtest for Option B.
+    lookback = primary lookback in trading days (user-selected months * 21).
+    Also uses lookback//2 and lookback//4 as shorter windows for composite ranking.
+
+    CASH overlay logic (fixed):
+    - Track running 2-day return of the current held ETF
+    - CHECK trigger BEFORE deciding what to trade today
+    - Enter CASH if prior 2-day return <= -10%
+    - Exit CASH only when top-ranked ETF is positive across ALL lookbacks
+    """
+    daily_tbill  = tbill_rate / 252
+    fee          = fee_bps / 10000
+    today        = datetime.now().date()
+    test_indices = list(range(*test_slice.indices(len(df))))
+
+    lb_long  = lookback
+    lb_mid   = max(lookback // 2, 5)
+    lb_short = max(lookback // 4, 3)
+
+    if not test_indices:
+        return {}
+
+    strat_rets  = []
+    audit_trail = []
+    date_index  = []
+
+    in_cash      = False
+    prev_ret     = 0.0   # yesterday's return
+    prev_prev_ret = 0.0  # day before yesterday's return
+    current_etf  = None
+
+    for idx in test_indices:
+        trade_date = df.index[idx]
+
+        # ── Daily rank-based momentum scoring ─────────────────────────────────
+        mom_scores           = compute_momentum_scores(
+            df, active_etfs, idx, lb_short, lb_mid, lb_long,
+        )
+        best_etf, best_score = select_top_etf(mom_scores)
+        if best_etf is None:
+            best_etf = active_etfs[0]
+
+        # ── Check 2-day drawdown using PRIOR days' returns (before today) ─────
+        two_day = (1 + prev_ret) * (1 + prev_prev_ret) - 1
+
+        if two_day <= CASH_DRAWDOWN_TRIGGER:
+            in_cash     = True
+            current_etf = None   # force re-evaluate on exit
+
+        # ── Exit CASH: top ETF positive across ALL lookbacks ──────────────────
+        if in_cash and _all_lookbacks_positive(mom_scores, best_etf):
+            in_cash = False
+
+        # ── Execute today's trade ─────────────────────────────────────────────
+        if in_cash:
+            signal_etf = "CASH"
+            net_ret    = daily_tbill
+        else:
+            switched    = (best_etf != current_etf) and (current_etf is not None)
+            signal_etf  = best_etf
+            current_etf = best_etf
+            ret_col     = f"{current_etf}_Ret"
+            today_ret   = 0.0
+            if ret_col in df.columns:
+                v = df[ret_col].iloc[idx]
+                if not np.isnan(v):
+                    today_ret = float(np.clip(v, -0.5, 0.5))
+            net_ret = today_ret - (fee if switched else 0.0)
+
+        # ── Roll the 2-day window ─────────────────────────────────────────────
+        prev_prev_ret = prev_ret
+        prev_ret      = net_ret if not in_cash else 0.0
+
+        strat_rets.append(net_ret)
+        date_index.append(trade_date)
+
+        if trade_date.date() < today:
+            audit_trail.append({
+                "Date":       trade_date.strftime("%Y-%m-%d"),
+                "Signal":     signal_etf,
+                "Rank Score": round(mom_scores.get(signal_etf, {}).get("rank_score", 0), 2)
+                              if signal_etf != "CASH" else "—",
+                "Net_Return": net_ret,
+                "In_Cash":    in_cash,
+            })
+
+    strat_rets = np.array(strat_rets, dtype=np.float64)
+    metrics    = _compute_metrics(strat_rets, tbill_rate, date_index)
+
+    return {
+        **metrics,
+        "strat_rets":      strat_rets,
+        "audit_trail":     audit_trail,
+        "current_etf":     current_etf,
+        "momentum_scores": mom_scores,
+    }
 LOOKBACK_1M  = 21    # ~1 month trading days
 LOOKBACK_3M  = 63    # ~3 months
 LOOKBACK_6M  = 126   # ~6 months
@@ -142,109 +247,6 @@ def _all_lookbacks_positive(momentum_scores: dict, etf: str) -> bool:
 
 
 # ── Walk-forward backtest ─────────────────────────────────────────────────────
-
-def execute_backtest_b(df: pd.DataFrame,
-                       active_etfs: list,
-                       test_slice: slice,
-                       lookback: int,
-                       fee_bps: int,
-                       tbill_rate: float) -> dict:
-    """
-    Walk-forward backtest for Option B.
-    lookback = primary lookback in trading days (user-selected months * 21).
-    Also uses lookback//2 and lookback//4 as shorter windows for composite ranking.
-    """
-    daily_tbill  = tbill_rate / 252
-    fee          = fee_bps / 10000
-    today        = datetime.now().date()
-    test_indices = list(range(*test_slice.indices(len(df))))
-
-    # Derive three lookback windows from user selection
-    lb_long  = lookback
-    lb_mid   = max(lookback // 2, 5)
-    lb_short = max(lookback // 4, 3)
-
-    if not test_indices:
-        return {}
-
-    strat_rets  = []
-    audit_trail = []
-    date_index  = []
-
-    in_cash     = False
-    recent_rets = []
-    current_etf = None
-
-    for idx in test_indices:
-        trade_date = df.index[idx]
-
-        # ── Daily rank-based momentum scoring ─────────────────────────────────
-        mom_scores           = compute_momentum_scores(
-            df, active_etfs, idx, lb_short, lb_mid, lb_long,
-        )
-        best_etf, best_score = select_top_etf(mom_scores)
-
-        if best_etf is None:
-            best_etf = active_etfs[0]
-
-        # ── Realized return for current ETF ───────────────────────────────────
-        hold_etf = current_etf if current_etf else best_etf
-        ret_col  = f"{hold_etf}_Ret"
-        realized = 0.0
-        if ret_col in df.columns:
-            v = df[ret_col].iloc[idx]
-            if not np.isnan(v):
-                realized = float(np.clip(v, -0.5, 0.5))
-
-        # ── 2-day CASH drawdown check ─────────────────────────────────────────
-        recent_rets.append(realized)
-        if len(recent_rets) > 2:
-            recent_rets.pop(0)
-        two_day = ((1 + recent_rets[0]) * (1 + recent_rets[-1]) - 1
-                   if len(recent_rets) >= 2 else 0.0)
-
-        if two_day <= CASH_DRAWDOWN_TRIGGER:
-            in_cash     = True
-            current_etf = None
-
-        # ── Exit CASH: top ETF positive across ALL three lookbacks ────────────
-        if in_cash and _all_lookbacks_positive(mom_scores, best_etf):
-            in_cash = False
-
-        # ── Determine signal and net return ───────────────────────────────────
-        if in_cash:
-            signal_etf = "CASH"
-            net_ret    = daily_tbill
-        else:
-            switched    = (best_etf != current_etf) and (current_etf is not None)
-            signal_etf  = best_etf
-            net_ret     = realized - (fee if switched else 0.0)
-            current_etf = best_etf
-
-        strat_rets.append(net_ret)
-        date_index.append(trade_date)
-
-        if trade_date.date() < today:
-            audit_trail.append({
-                "Date":       trade_date.strftime("%Y-%m-%d"),
-                "Signal":     signal_etf,
-                "Rank Score": round(mom_scores.get(signal_etf, {}).get("rank_score", 0), 2)
-                              if signal_etf != "CASH" else "—",
-                "Net_Return": net_ret,
-                "In_Cash":    in_cash,
-            })
-
-    strat_rets = np.array(strat_rets, dtype=np.float64)
-    metrics    = _compute_metrics(strat_rets, tbill_rate, date_index)
-
-    return {
-        **metrics,
-        "strat_rets":      strat_rets,
-        "audit_trail":     audit_trail,
-        "current_etf":     current_etf,
-        "momentum_scores": mom_scores,
-    }
-
 
 def _compute_metrics(strat_rets, tbill_rate, date_index=None):
     if len(strat_rets) == 0:
