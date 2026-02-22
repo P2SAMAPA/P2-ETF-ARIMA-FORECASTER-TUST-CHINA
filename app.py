@@ -110,7 +110,7 @@ with st.sidebar:
         st.caption("🏆 **Selection:** Top 1 ETF daily")
         st.caption("💸 **Fee:** Only charged on ETF switches")
 
-    st.caption("🛡️ **CASH overlay:** 2-day ≤ −15% drawdown")
+    st.caption("🛡️ **CASH overlay:** 2-day ≤ −10% drawdown")
     st.divider()
 
     run_button = st.button(
