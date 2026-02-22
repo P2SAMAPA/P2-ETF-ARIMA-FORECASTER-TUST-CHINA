@@ -105,7 +105,8 @@ with st.sidebar:
     )
 
     st.divider()
-    st.caption("📐 **Data Split:** 80% train · 10% val · 10% OOS")
+    if option == "Option A — ARIMA Forecaster":
+        st.caption("📐 **Data Split:** 80% train · 10% val · 10% OOS")
     st.caption("🛡️ **CASH overlay:** 2-day ≤ −10% drawdown")
     st.divider()
 
