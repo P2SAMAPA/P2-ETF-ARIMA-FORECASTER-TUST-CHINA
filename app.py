@@ -192,8 +192,9 @@ if run_button:
         )
     else:
         st.info(
-            f"📅 Full dataset: **{df.index[0].strftime('%Y-%m-%d')} → {df.index[-1].strftime('%Y-%m-%d')}**  "
-            f"· OOS: **{n-t2}** days · ETFs: **{', '.join(active_etfs)}**"
+            f"📅 Data through **{df.index[-1].strftime('%Y-%m-%d')}**  "
+            f"· Lookback: up to **18 months** · OOS evaluation: **{n-t2}** days  "
+            f"· ETFs: **{', '.join(active_etfs)}**"
         )
 
     # ── SPY benchmark ─────────────────────────────────────────────────────────
