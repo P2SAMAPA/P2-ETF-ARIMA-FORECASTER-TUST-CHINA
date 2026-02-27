@@ -20,7 +20,12 @@ except Exception:
 
 DATASET_REPO   = "P2SAMAPA/fi-etf-macro-signal-master-data"
 PARQUET_FILE   = "master_data.parquet"
-TARGET_ETFS    = ["TLT", "TBT", "VNQ", "SLV", "GLD"]
+
+# ── UPDATED ETF LIST ─────────────────────────────────────────────────────────
+# Removed: TBT
+# Added: VCIT, LQD, HYG (Fixed Income ETFs)
+TARGET_ETFS    = ["TLT", "VCIT", "LQD", "HYG", "VNQ", "SLV", "GLD"]
+
 BENCHMARK_COLS = ["SPY", "AGG"]
 TBILL_COL      = "TBILL_3M"
 
