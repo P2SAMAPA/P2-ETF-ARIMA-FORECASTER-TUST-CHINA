@@ -2,6 +2,7 @@
 app.py
 P2-ETF Forecaster
 Option A (ARIMA) and Option B (Momentum) are fully segregated.
+Each option's modules are imported ONLY when that option is selected.
 """
 import os
 import streamlit as st
@@ -28,13 +29,15 @@ st.set_page_config(
 HF_TOKEN = os.getenv("HF_TOKEN", "")
 HOLD_PERIODS = [1, 3, 5]
 
+# Lookback windows — always contained within the selected period
+# Long = selected period, Mid = 2/3 of it, Short = 1/3 of it
 LB_MAP = {
-    3: (21, 42, 63),
-    6: (42, 84, 126),
-    9: (63, 126, 189),
-    12: (84, 168, 252),
-    15: (105, 210, 315),
-    18: (126, 252, 378),
+    3: (21, 42, 63),    # 1m,  2m,  3m
+    6: (42, 84, 126),   # 2m,  4m,  6m
+    9: (63, 126, 189),  # 3m,  6m,  9m
+    12: (84, 168, 252), # 4m,  8m,  12m
+    15: (105, 210, 315),# 5m,  10m, 15m
+    18: (126, 252, 378),# 6m,  12m, 18m
 }
 
 # ── Session state ─────────────────────────────────────────────────────────────
@@ -142,6 +145,33 @@ with st.spinner("📡 Loading dataset from HuggingFace..."):
     freshness = check_data_freshness(df_raw)
     show_freshness_status(freshness)
 
+# ═════════════════════════════════════════════════════════════════════════════
+# 🔍 DEBUG SECTION - Check what data is actually in the dataset
+# Remove this section after debugging is complete
+# ═════════════════════════════════════════════════════════════════════════════
+st.divider()
+st.subheader("🔍 DEBUG: Dataset Contents")
+
+etf_cols = [c for c in df_raw.columns if any(etf in c for etf in ["TLT", "VCIT", "LQD", "HYG", "VNQ", "SLV", "GLD"])]
+st.write("**ETF Columns Found:**", etf_cols)
+
+for etf in ["TLT", "VCIT", "LQD", "HYG", "VNQ", "SLV", "GLD"]:
+    if etf in df_raw.columns:
+        valid_rows = df_raw[etf].dropna().shape[0]
+        total_rows = df_raw.shape[0]
+        nan_count = df_raw[etf].isna().sum()
+        first_date = df_raw[etf].dropna().index[0].strftime("%Y-%m-%d") if valid_rows > 0 else "N/A"
+        last_date = df_raw[etf].dropna().index[-1].strftime("%Y-%m-%d") if valid_rows > 0 else "N/A"
+        st.write(f"**{etf}:** {valid_rows}/{total_rows} valid rows | {nan_count} NaN | {first_date} → {last_date}")
+    else:
+        st.write(f"**{etf}:** ❌ Column not found in dataset")
+
+st.info("⚠️ If VCIT/LQD/HYG show 6 rows or 'Column not found', the issue is in the dataset or loader.py")
+st.divider()
+# ═════════════════════════════════════════════════════════════════════════════
+# END DEBUG SECTION
+# ═════════════════════════════════════════════════════════════════════════════
+
 with st.sidebar:
     st.divider()
     st.subheader("📦 Dataset Info")
@@ -157,6 +187,7 @@ with st.sidebar:
 if run_button:
     st.session_state.output_ready = False
     st.session_state.option = option
+    # ── Shared data prep ──────────────────────────────────────────────────────
     effective_start = start_yr if option == "Option A — ARIMA Forecaster" else 2008
     with st.spinner("🔧 Preparing data..."):
         df, availability, active_etfs, tbill_rate = prepare_data(df_raw, effective_start)
@@ -187,6 +218,7 @@ if run_button:
             f"· ETFs: **{', '.join(active_etfs)}**"
         )
 
+    # ── SPY benchmark ─────────────────────────────────────────────────────────
     spy_ann = None
     if "SPY_Ret" in df.columns:
         spy_raw = df["SPY_Ret"].iloc[test_slice].values.astype(float)
@@ -194,7 +226,11 @@ if run_button:
         if len(spy_raw) > 5:
             spy_ann = float(np.prod(1 + spy_raw) ** (252 / len(spy_raw)) - 1)
 
+    # ═════════════════════════════════════════════════════════════════════════
+    # OPTION A — ARIMA (lazy imports, only runs when Option A is selected)
+    # ═════════════════════════════════════════════════════════════════════════
     if option == "Option A — ARIMA Forecaster":
+
         from option_a_arima_forecaster import (run_all_etfs,
                                                 select_best_lookback_arima)
         from option_a_run_analysis import (compute_all_run_stats,
@@ -261,7 +297,12 @@ if run_button:
             "lb_mid": None,
             "lb_long": None,
         })
+
+    # ═════════════════════════════════════════════════════════════════════════
+    # OPTION B — MOMENTUM (lazy imports, only runs when Option B is selected)
+    # ═════════════════════════════════════════════════════════════════════════
     else:
+
         from option_b_momentum import (execute_backtest_b,
                                         compute_momentum_scores,
                                         select_top_etf,
@@ -328,7 +369,7 @@ if run_button:
             "lb_long": lb_long,
         })
 
-# ── Render ───────────────────────────────────────────────────────────────────
+# ── Render (persists across reruns) ───────────────────────────────────────────
 if not st.session_state.output_ready:
     st.info("👈 Configure parameters and click 🚀 Run.")
     st.stop()
@@ -345,6 +386,7 @@ next_date = get_next_trading_day()
 
 st.divider()
 
+# ── Signal banner (shared) ────────────────────────────────────────────────────
 show_signal_banner(
     etf=signal["etf"],
     hold_period=signal["hold_period"],
@@ -356,6 +398,7 @@ show_signal_banner(
 
 st.divider()
 
+# ── Option-specific panels ────────────────────────────────────────────────────
 if current_option == "Option A — ARIMA Forecaster":
     show_etf_scores_table(
         scores=signal["scores"],
@@ -385,16 +428,19 @@ else:
 
 st.divider()
 
+# ── OOS Metrics (shared) ──────────────────────────────────────────────────────
 st.subheader("📊 Out-of-Sample Performance Metrics")
 show_metrics_row(result, tbill_rate, spy_ann=spy_ann)
 
 st.divider()
 
+# ── Audit trail ───────────────────────────────────────────────────────────────
 st.subheader("📋 Audit Trail — Last 20 Trading Days")
 if current_option == "Option A — ARIMA Forecaster":
     show_audit_trail(result.get("audit_trail", []))
 else:
     show_audit_trail_b(result.get("audit_trail", []))
 
+# ── Methodology (Option B only) ───────────────────────────────────────────────
 if current_option == "Option B — Momentum Rotation":
     show_methodology()
