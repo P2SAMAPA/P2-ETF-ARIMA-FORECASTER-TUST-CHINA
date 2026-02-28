@@ -79,7 +79,7 @@ def execute_backtest(df: pd.DataFrame, active_etfs: list,
                      lookback: int, fee_bps: int,
                      tbill_rate: float,
                      hold_periods: list = HOLD_PERIODS) -> dict:
-    from arima_forecaster import run_all_etfs
+    from option_a_arima_forecaster import run_all_etfs
     from run_analysis import get_reversal_scores
 
     daily_tbill    = tbill_rate / 252
