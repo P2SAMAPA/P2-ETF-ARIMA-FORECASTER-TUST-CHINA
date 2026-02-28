@@ -1,10 +1,6 @@
 """
-option_a_selector.py
+selector.py
 Daily ETF + hold period selection and walk-forward backtest.
-Scoring per ETF × hold_period:
-net_score = arima_forecast[h] - fee + momentum_bonus + reversal_pressure_bonus
-CASH overlay: 2-day cumulative return <= -15% triggers CASH.
-Exit CASH: ARIMA direction turns positive on best ETF.
 """
 import numpy as np
 import pandas as pd
@@ -93,12 +89,9 @@ def execute_backtest(df: pd.DataFrame, active_etfs: list,
     current_etf = active_etfs[0]
     current_h = hold_periods[0]
 
-    progress = st_progress_placeholder()
-
     for step, idx in enumerate(test_indices):
         trade_date = df.index[idx]
 
-        # ── Re-evaluate when hold expires ─────────────────────────────────────
         if hold_remaining <= 0:
             arima_res = run_all_etfs(df.iloc[:idx], active_etfs, lookback, hold_periods)
             rev_scores = get_reversal_scores(df, active_etfs, run_stats, idx)
@@ -108,7 +101,6 @@ def execute_backtest(df: pd.DataFrame, active_etfs: list,
             current_h = signal["hold_period"]
             hold_remaining = current_h
 
-        # ── Realized return ───────────────────────────────────────────────────
         ret_col = f"{current_etf}_Ret"
         realized = float(np.clip(
             df[ret_col].iloc[idx] if ret_col in df.columns else 0.0,
@@ -117,7 +109,6 @@ def execute_backtest(df: pd.DataFrame, active_etfs: list,
         if np.isnan(realized):
             realized = 0.0
 
-        # ── CASH drawdown check ───────────────────────────────────────────────
         recent_rets.append(realized)
         if len(recent_rets) > 2:
             recent_rets.pop(0)
@@ -128,7 +119,6 @@ def execute_backtest(df: pd.DataFrame, active_etfs: list,
             in_cash = True
             hold_remaining = 0
 
-        # ── Exit CASH when ARIMA turns bullish ────────────────────────────────
         if in_cash and hold_remaining <= 0:
             arima_check = run_all_etfs(df.iloc[:idx], active_etfs, lookback, [1])
             best_dir = max(active_etfs,
@@ -164,7 +154,6 @@ def execute_backtest(df: pd.DataFrame, active_etfs: list,
     }
 
 def st_progress_placeholder():
-    """Dummy — progress shown via app.py spinner."""
     return None
 
 def _compute_metrics(strat_rets, tbill_rate, date_index=None):
