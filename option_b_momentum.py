@@ -9,9 +9,9 @@ Composite rank score (all rank-based, lower = better):
 
 CASH overlay:
   ENTER: 2-day compound return of held ETF <= -10%
-  EXIT:  top-ranked ETF has positive 1-month trailing return
-         AND its composite rank score is in the top half (rank_score <= median)
-         This is checked fresh each day while in CASH.
+  EXIT:  top-ranked ETF has BOTH 1-month AND 3-month trailing returns > 0,
+         AND at least 2 days have passed since entering CASH (prevents
+         same-day re-entry when strong LT momentum masks a fresh drawdown).
 """
 
 import numpy as np
@@ -19,6 +19,7 @@ import pandas as pd
 from datetime import datetime
 
 CASH_DRAWDOWN_TRIGGER = -0.10
+MIN_CASH_DAYS         = 2      # must stay in CASH at least this many days
 
 LOOKBACK_1M = 21
 LOOKBACK_3M = 63
@@ -110,7 +111,9 @@ def compute_momentum_scores(df: pd.DataFrame, active_etfs: list,
         momentum_rank = sum(trail_ranks[lb].get(etf, n_etfs) for lb in lookbacks) / 3.0
         rs_rank_avg   = sum(rs_ranks[lb].get(etf, n_etfs)    for lb in lookbacks) / 3.0
         ma_r          = ma_rank.get(etf, n_etfs)
-        composite     = W_MOMENTUM * momentum_rank + W_RS_SPY * rs_rank_avg + W_MA_SLOPE * ma_r
+        composite     = (W_MOMENTUM * momentum_rank +
+                         W_RS_SPY   * rs_rank_avg   +
+                         W_MA_SLOPE * ma_r)
         scores[etf]   = {
             "rank_score":    composite,
             "final_score":   n_etfs + 1 - composite,
@@ -138,18 +141,30 @@ def select_top_etf(momentum_scores: dict) -> tuple:
 
 # ── CASH re-entry ─────────────────────────────────────────────────────────────
 
-def should_exit_cash(best_etf: str, momentum_scores: dict) -> bool:
+def should_exit_cash(best_etf: str,
+                     momentum_scores: dict,
+                     cash_days_held: int) -> bool:
     """
-    Exit CASH when the top-ranked ETF satisfies BOTH:
-      1. 1-month trailing return > 0  (short-term trend has recovered)
-      2. 3-month trailing return > 0  (medium-term trend is also positive)
+    Exit CASH when ALL of:
+      1. At least MIN_CASH_DAYS have passed since entering CASH.
+         Prevents same-day re-entry when long-term momentum is still
+         positive but a fresh -10% drawdown just fired.
+      2. Top ETF 1-month trailing return > 0  (short-term trend recovered)
+      3. Top ETF 3-month trailing return > 0  (medium-term trend recovered)
+    """
+    if cash_days_held < MIN_CASH_DAYS:
+        return False
 
-    This is simple, reliable, and directly answers "has the market recovered?"
-    without fragile Z-score machinery that requires a warm-up period and
-    produces near-zero variance on rank scores (causing permanent CASH lock).
-    """
-    info = momentum_scores.get(best_etf, {})
-    return info.get("ret_1m", -1.0) > 0 and info.get("ret_3m", -1.0) > 0
+    info  = momentum_scores.get(best_etf, {})
+    ret1m = info.get("ret_1m", -1.0)
+    ret3m = info.get("ret_3m", -1.0)
+
+    if ret1m is None or np.isnan(ret1m) or ret1m <= 0:
+        return False
+    if ret3m is None or np.isnan(ret3m) or ret3m <= 0:
+        return False
+
+    return True
 
 
 # ── Walk-forward backtest ─────────────────────────────────────────────────────
@@ -172,12 +187,13 @@ def execute_backtest_b(df: pd.DataFrame,
     if not test_indices:
         return {}
 
-    strat_rets  = []
-    audit_trail = []
-    date_index  = []
-    in_cash     = False
-    ret_history = [0.0, 0.0]   # actual ETF returns — always tracks market
-    current_etf = None
+    strat_rets    = []
+    audit_trail   = []
+    date_index    = []
+    in_cash       = False
+    cash_days_held = 0      # counts how many days we've been in CASH
+    ret_history   = [0.0, 0.0]
+    current_etf   = None
 
     for idx in test_indices:
         trade_date = df.index[idx]
@@ -189,18 +205,25 @@ def execute_backtest_b(df: pd.DataFrame,
         if best_etf is None:
             best_etf = active_etfs[0]
 
-        # CASH entry: 2-day compound return of actual ETF returns
+        # ── CASH entry ────────────────────────────────────────────────────────
         two_day = (1 + ret_history[-2]) * (1 + ret_history[-1]) - 1
         if two_day <= CASH_DRAWDOWN_TRIGGER:
-            in_cash     = True
-            current_etf = None
+            if not in_cash:                 # only reset counter on fresh entry
+                in_cash        = True
+                cash_days_held = 0
+                current_etf    = None
 
-        # CASH exit: top ETF 1m AND 3m trailing returns positive
-        if in_cash and should_exit_cash(best_etf, mom_scores):
-            in_cash     = False
-            current_etf = None
+        # ── CASH exit ─────────────────────────────────────────────────────────
+        # cash_days_held is incremented BEFORE the exit check so day-0
+        # (the day we entered) counts as 0 and exit requires >= MIN_CASH_DAYS.
+        if in_cash:
+            cash_days_held += 1
+            if should_exit_cash(best_etf, mom_scores, cash_days_held):
+                in_cash        = False
+                cash_days_held = 0
+                current_etf    = None
 
-        # Execute
+        # ── Execute ───────────────────────────────────────────────────────────
         if in_cash:
             signal_etf     = "CASH"
             net_ret        = daily_tbill
@@ -218,7 +241,7 @@ def execute_backtest_b(df: pd.DataFrame,
             net_ret        = raw_ret - (fee if switched else 0.0)
             actual_etf_ret = raw_ret
 
-        # Always track actual ETF return so drawdown trigger sees real moves
+        # Always track actual ETF return so drawdown trigger stays live
         ret_history.append(actual_etf_ret)
         ret_history = ret_history[-2:]
 
@@ -240,11 +263,12 @@ def execute_backtest_b(df: pd.DataFrame,
 
     return {
         **metrics,
-        "strat_rets":   strat_rets,
-        "audit_trail":  audit_trail,
-        "current_etf":  current_etf,
+        "strat_rets":      strat_rets,
+        "audit_trail":     audit_trail,
+        "current_etf":     current_etf,
         "momentum_scores": mom_scores,
         "ended_in_cash":   in_cash,
+        "cash_days_held":  cash_days_held,
     }
 
 
