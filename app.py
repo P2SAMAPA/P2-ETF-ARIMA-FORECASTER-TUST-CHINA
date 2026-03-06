@@ -26,11 +26,9 @@ st.set_page_config(
     layout="wide",
 )
 
-HF_TOKEN = os.getenv("HF_TOKEN", "")
+HF_TOKEN     = os.getenv("HF_TOKEN", "")
 HOLD_PERIODS = [1, 3, 5]
 
-# Lookback windows — always contained within the selected period
-# Long = selected period, Mid = 2/3 of it, Short = 1/3 of it
 LB_MAP = {
     3:  (21,  42,  63),
     6:  (42,  84,  126),
@@ -74,17 +72,16 @@ with st.sidebar:
         ["Option A — ARIMA Forecaster", "Option B — Momentum Rotation"],
         index=0,
     )
-
     st.divider()
 
     if option == "Option A — ARIMA Forecaster":
-        start_yr = st.slider("📅 Start Year", 2008, 2025, 2015)
+        start_yr        = st.slider("📅 Start Year", 2008, 2025, 2015)
         lookback_months = None
         st.caption("🔍 **Auto-lookback:** 30 / 45 / 60d via val MAE")
         st.caption("⏱️ **Hold periods:** 1d · 3d · 5d net of fees")
         st.caption("📄 *Based on Xu et al., TUST China (2022)*")
     else:
-        start_yr = None
+        start_yr        = None
         lookback_months = st.select_slider(
             "📅 Momentum Lookback",
             options=[3, 6, 9, 12, 15, 18],
@@ -101,7 +98,6 @@ with st.sidebar:
         options=list(range(0, 105, 5)),
         value=10,
     )
-
     st.divider()
     if option == "Option A — ARIMA Forecaster":
         st.caption("📐 **Data Split:** 80% train · 10% val · 10% OOS")
@@ -145,32 +141,25 @@ with st.spinner("📡 Loading dataset from HuggingFace..."):
     freshness = check_data_freshness(df_raw)
     show_freshness_status(freshness)
 
-# ═════════════════════════════════════════════════════════════════════════════
-# 🔍 DEBUG SECTION - Check what data is actually in the dataset
-# Remove this section after debugging is complete
-# ═════════════════════════════════════════════════════════════════════════════
+# ── DEBUG section ─────────────────────────────────────────────────────────────
 st.divider()
 st.subheader("🔍 DEBUG: Dataset Contents")
-
-etf_cols = [c for c in df_raw.columns if any(etf in c for etf in ["TLT", "VCIT", "LQD", "HYG", "VNQ", "SLV", "GLD"])]
+etf_cols = [c for c in df_raw.columns
+            if any(e in c for e in ["TLT","VCIT","LQD","HYG","VNQ","SLV","GLD"])]
 st.write("**ETF Columns Found:**", etf_cols)
-
 for etf in ["TLT", "VCIT", "LQD", "HYG", "VNQ", "SLV", "GLD"]:
     if etf in df_raw.columns:
-        valid_rows = df_raw[etf].dropna().shape[0]
-        total_rows = df_raw.shape[0]
-        nan_count  = df_raw[etf].isna().sum()
-        first_date = df_raw[etf].dropna().index[0].strftime("%Y-%m-%d") if valid_rows > 0 else "N/A"
-        last_date  = df_raw[etf].dropna().index[-1].strftime("%Y-%m-%d") if valid_rows > 0 else "N/A"
-        st.write(f"**{etf}:** {valid_rows}/{total_rows} valid rows | {nan_count} NaN | {first_date} → {last_date}")
+        valid = df_raw[etf].dropna().shape[0]
+        total = df_raw.shape[0]
+        nans  = df_raw[etf].isna().sum()
+        fd    = df_raw[etf].dropna().index[0].strftime("%Y-%m-%d") if valid > 0 else "N/A"
+        ld    = df_raw[etf].dropna().index[-1].strftime("%Y-%m-%d") if valid > 0 else "N/A"
+        st.write(f"**{etf}:** {valid}/{total} valid rows | {nans} NaN | {fd} → {ld}")
     else:
         st.write(f"**{etf}:** ❌ Column not found in dataset")
-
 st.info("⚠️ If VCIT/LQD/HYG show 6 rows or 'Column not found', the issue is in the dataset or loader.py")
 st.divider()
-# ═════════════════════════════════════════════════════════════════════════════
-# END DEBUG SECTION
-# ═════════════════════════════════════════════════════════════════════════════
+# ── END DEBUG ─────────────────────────────────────────────────────────────────
 
 with st.sidebar:
     st.divider()
@@ -186,24 +175,22 @@ with st.sidebar:
 # ── Run ───────────────────────────────────────────────────────────────────────
 if run_button:
     st.session_state.output_ready = False
-    st.session_state.option = option
+    st.session_state.option       = option
 
-    # ── Shared data prep ──────────────────────────────────────────────────────
     effective_start = start_yr if option == "Option A — ARIMA Forecaster" else 2008
     with st.spinner("🔧 Preparing data..."):
         df, availability, active_etfs, tbill_rate = prepare_data(df_raw, effective_start)
 
     show_availability_warnings(availability)
-
     if not active_etfs:
         st.error("❌ No ETFs available for the selected period.")
         st.stop()
 
-    n = len(df)
-    t1 = int(n * 0.80)
-    t2 = int(n * 0.90)
-    train_slice = slice(0, t1)
-    test_slice  = slice(t2, n)
+    n             = len(df)
+    t1            = int(n * 0.80)
+    t2            = int(n * 0.90)
+    train_slice   = slice(0, t1)
+    test_slice    = slice(t2, n)
     last_date_str = str(freshness.get("last_date", "unknown"))
 
     if option == "Option A — ARIMA Forecaster":
@@ -219,7 +206,6 @@ if run_button:
             f"· ETFs: **{', '.join(active_etfs)}**"
         )
 
-    # ── SPY benchmark ─────────────────────────────────────────────────────────
     spy_ann = None
     if "SPY_Ret" in df.columns:
         spy_raw = df["SPY_Ret"].iloc[test_slice].values.astype(float)
@@ -228,15 +214,13 @@ if run_button:
             spy_ann = float(np.prod(1 + spy_raw) ** (252 / len(spy_raw)) - 1)
 
     # ═════════════════════════════════════════════════════════════════════════
-    # OPTION A — ARIMA (lazy imports, only runs when Option A is selected)
+    # OPTION A — ARIMA
     # ═════════════════════════════════════════════════════════════════════════
     if option == "Option A — ARIMA Forecaster":
 
-        from option_a_arima_forecaster import (run_all_etfs,
-                                                select_best_lookback_arima)
-        from option_a_run_analysis import (compute_all_run_stats,
-                                            get_reversal_scores)
-        from option_a_selector import (execute_backtest, select_signal)
+        from option_a_arima_forecaster import run_all_etfs, select_best_lookback_arima
+        from option_a_run_analysis     import compute_all_run_stats, get_reversal_scores
+        from option_a_selector         import execute_backtest, select_signal
 
         lb_key    = make_lb_cache_key(last_date_str, start_yr, "80/10/10_A")
         lb_cached = load_cache(lb_key)
@@ -279,28 +263,28 @@ if run_button:
                                            active_etfs, len(df), fee_bps, HOLD_PERIODS)
 
         st.session_state.update({
-            "output_ready":    True,
-            "result":          result,
-            "arima_results":   arima_results,
-            "run_scores":      rev_scores,
-            "signal":          signal,
-            "momentum_scores": None,
-            "test_slice":      test_slice,
+            "output_ready":     True,
+            "result":           result,
+            "arima_results":    arima_results,
+            "run_scores":       rev_scores,
+            "signal":           signal,
+            "momentum_scores":  None,
+            "test_slice":       test_slice,
             "optimal_lookback": optimal_lookback,
-            "df_ready":        df,
-            "tbill_rate":      tbill_rate,
-            "active_etfs":     active_etfs,
-            "availability":    availability,
-            "spy_ann":         spy_ann,
-            "fee_bps":         fee_bps,
-            "option":          option,
-            "lb_short":        None,
-            "lb_mid":          None,
-            "lb_long":         None,
+            "df_ready":         df,
+            "tbill_rate":       tbill_rate,
+            "active_etfs":      active_etfs,
+            "availability":     availability,
+            "spy_ann":          spy_ann,
+            "fee_bps":          fee_bps,
+            "option":           option,
+            "lb_short":         None,
+            "lb_mid":           None,
+            "lb_long":          None,
         })
 
     # ═════════════════════════════════════════════════════════════════════════
-    # OPTION B — MOMENTUM (lazy imports, only runs when Option B is selected)
+    # OPTION B — MOMENTUM
     # ═════════════════════════════════════════════════════════════════════════
     else:
 
@@ -328,7 +312,7 @@ if run_button:
             save_cache(cache_key, {"result": result})
 
         with st.spinner("🔮 Computing next-day momentum signal..."):
-            mom_scores       = compute_momentum_scores(
+            mom_scores           = compute_momentum_scores(
                 df, active_etfs, len(df), lb_short, lb_mid, lb_long,
             )
             best_etf, best_score = select_top_etf(mom_scores)
@@ -336,24 +320,12 @@ if run_button:
             backtest_ended_in_cash = result.get("ended_in_cash", False)
 
             if backtest_ended_in_cash:
-                # Build a 63-day rolling rank_score history for the live
-                # should_exit_cash() check. This mirrors exactly what
-                # execute_backtest_b tracks internally via rank_score_history.
-                # We replay the last min(63, len(df)) days so the Z-score
-                # baseline is consistent with the backtest logic.
-                rank_score_history = []
-                history_start = max(1, len(df) - 63)
-                for i in range(history_start, len(df) + 1):
-                    scores_i         = compute_momentum_scores(
-                        df, active_etfs, i, lb_short, lb_mid, lb_long,
-                    )
-                    top_etf_i, _     = select_top_etf(scores_i)
-                    if top_etf_i:
-                        rank_score_history.append(
-                            scores_i[top_etf_i]["rank_score"]
-                        )
+                # Reuse the rank_score_history buffer already computed
+                # inside execute_backtest_b — zero extra computation.
+                # Append today's score so the Z-score includes the live day.
+                rank_score_history = list(result.get("rank_score_history", []))
+                rank_score_history.append(mom_scores[best_etf]["rank_score"])
 
-                # New 3-argument signature: (best_etf, momentum_scores, rank_score_history)
                 in_cash_live = not should_exit_cash(
                     best_etf, mom_scores, rank_score_history
                 )
@@ -371,44 +343,43 @@ if run_button:
             }
 
         st.session_state.update({
-            "output_ready":    True,
-            "result":          result,
-            "arima_results":   None,
-            "run_scores":      None,
-            "signal":          signal,
-            "momentum_scores": mom_scores,
-            "test_slice":      test_slice,
+            "output_ready":     True,
+            "result":           result,
+            "arima_results":    None,
+            "run_scores":       None,
+            "signal":           signal,
+            "momentum_scores":  mom_scores,
+            "test_slice":       test_slice,
             "optimal_lookback": None,
-            "df_ready":        df,
-            "tbill_rate":      tbill_rate,
-            "active_etfs":     active_etfs,
-            "availability":    availability,
-            "spy_ann":         spy_ann,
-            "fee_bps":         fee_bps,
-            "option":          option,
-            "lb_short":        lb_short,
-            "lb_mid":          lb_mid,
-            "lb_long":         lb_long,
+            "df_ready":         df,
+            "tbill_rate":       tbill_rate,
+            "active_etfs":      active_etfs,
+            "availability":     availability,
+            "spy_ann":          spy_ann,
+            "fee_bps":          fee_bps,
+            "option":           option,
+            "lb_short":         lb_short,
+            "lb_mid":           lb_mid,
+            "lb_long":          lb_long,
         })
 
-# ── Render (persists across reruns) ───────────────────────────────────────────
+# ── Render ────────────────────────────────────────────────────────────────────
 if not st.session_state.output_ready:
     st.info("👈 Configure parameters and click 🚀 Run.")
     st.stop()
 
-result       = st.session_state.result
-signal       = st.session_state.signal
-df           = st.session_state.df_ready
-tbill_rate   = st.session_state.tbill_rate
-active_etfs  = st.session_state.active_etfs
-spy_ann      = st.session_state.spy_ann
-fee_bps      = st.session_state.fee_bps
+result         = st.session_state.result
+signal         = st.session_state.signal
+df             = st.session_state.df_ready
+tbill_rate     = st.session_state.tbill_rate
+active_etfs    = st.session_state.active_etfs
+spy_ann        = st.session_state.spy_ann
+fee_bps        = st.session_state.fee_bps
 current_option = st.session_state.option
-next_date    = get_next_trading_day()
+next_date      = get_next_trading_day()
 
 st.divider()
 
-# ── Signal banner (shared) ────────────────────────────────────────────────────
 show_signal_banner(
     etf=signal["etf"],
     hold_period=signal["hold_period"],
@@ -420,7 +391,6 @@ show_signal_banner(
 
 st.divider()
 
-# ── Option-specific panels ────────────────────────────────────────────────────
 if current_option == "Option A — ARIMA Forecaster":
     show_etf_scores_table(
         scores=signal["scores"],
@@ -450,19 +420,16 @@ else:
 
 st.divider()
 
-# ── OOS Metrics (shared) ──────────────────────────────────────────────────────
 st.subheader("📊 Out-of-Sample Performance Metrics")
 show_metrics_row(result, tbill_rate, spy_ann=spy_ann)
 
 st.divider()
 
-# ── Audit trail ───────────────────────────────────────────────────────────────
 st.subheader("📋 Audit Trail — Last 20 Trading Days")
 if current_option == "Option A — ARIMA Forecaster":
     show_audit_trail(result.get("audit_trail", []))
 else:
     show_audit_trail_b(result.get("audit_trail", []))
 
-# ── Methodology (Option B only) ───────────────────────────────────────────────
 if current_option == "Option B — Momentum Rotation":
     show_methodology()
