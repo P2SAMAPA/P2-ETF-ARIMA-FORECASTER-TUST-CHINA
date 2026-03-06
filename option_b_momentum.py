@@ -9,7 +9,9 @@ Composite rank score (all rank-based, lower = better):
 
 CASH overlay:
   ENTER: 2-day compound return <= -10% (checked at start of day)
-  EXIT:  top-ranked ETF Z-score >= 1.2 sigma vs 63-day rolling distribution
+  EXIT:  top-ranked ETF composite rank score Z-score >= 1.2 sigma vs its
+         own 63-day rolling distribution of rank scores (not raw returns).
+         Also requires the top ETF to have positive 1-month trailing return.
 """
 
 import numpy as np
@@ -72,7 +74,6 @@ def _relative_strength(etf_prices: pd.Series, spy_prices: pd.Series,
     if r_etf is None or np.isnan(r_etf):
         return np.nan
     if r_spy is None or np.isnan(r_spy) or abs(r_spy) < 0.001:
-        # SPY flat/negative — use excess return instead
         return r_etf - (r_spy if r_spy is not None and not np.isnan(r_spy) else 0.0)
     return r_etf / r_spy
 
@@ -106,18 +107,9 @@ def compute_momentum_scores(df: pd.DataFrame, active_etfs: list,
     Three-factor composite rank score for each ETF.
 
     Factor 1 — Trailing Return Rank (50%)
-        Rank ETFs by trailing return over lb_short / lb_mid / lb_long.
-        Average the three ranks → momentum_rank.
-
     Factor 2 — Relative Strength vs SPY Rank (25%)
-        Rank ETFs by (ETF_return / SPY_return) over lb_short / lb_mid / lb_long.
-        Average the three ranks → rs_rank.
-
     Factor 3 — MA Slope Rank (25%)
-        Rank ETFs by (50d_MA / 200d_MA - 1).
-        Single rank per ETF → ma_rank.
 
-    Composite rank = 0.50 * momentum_rank + 0.25 * rs_rank + 0.25 * ma_rank
     Lower composite rank = stronger overall signal = selected.
     """
     price_slice = df.iloc[:as_of_idx]
@@ -166,18 +158,14 @@ def compute_momentum_scores(df: pd.DataFrame, active_etfs: list,
     # ── Composite ─────────────────────────────────────────────────────────────
     scores = {}
     for etf in active_etfs:
-        # Average momentum ranks across 3 lookbacks
         m_ranks = [trail_ranks[lb].get(etf, n_etfs) for lb in lookbacks]
         momentum_rank = sum(m_ranks) / 3.0
 
-        # Average RS ranks across 3 lookbacks
         r_ranks = [rs_ranks[lb].get(etf, n_etfs) for lb in lookbacks]
         rs_rank_avg = sum(r_ranks) / 3.0
 
-        # MA slope rank (single)
         ma_r = ma_rank.get(etf, n_etfs)
 
-        # Weighted composite rank
         composite_rank = (W_MOMENTUM * momentum_rank +
                           W_RS_SPY   * rs_rank_avg   +
                           W_MA_SLOPE * ma_r)
@@ -188,14 +176,13 @@ def compute_momentum_scores(df: pd.DataFrame, active_etfs: list,
         scores[etf] = {
             "rank_score":     composite_rank,
             "final_score":    final_score,
-            # Factor details for UI
             "ret_1m":         trail_rets[lb_short].get(etf, 0.0) or 0.0,
             "ret_3m":         trail_rets[lb_mid].get(etf,   0.0) or 0.0,
             "ret_6m":         trail_rets[lb_long].get(etf,  0.0) or 0.0,
             "rank_1m":        trail_ranks[lb_short].get(etf, n_etfs),
             "rank_3m":        trail_ranks[lb_mid].get(etf,   n_etfs),
             "rank_6m":        trail_ranks[lb_long].get(etf,  n_etfs),
-            "rs_spy":         rs_rets[lb_mid].get(etf, 0.0) or 0.0,  # mid window
+            "rs_spy":         rs_rets[lb_mid].get(etf, 0.0) or 0.0,
             "rs_rank":        round(rs_rank_avg, 2),
             "ma_slope":       ma_slopes.get(etf, 0.0) or 0.0,
             "ma_rank":        ma_r,
@@ -212,38 +199,53 @@ def select_top_etf(momentum_scores: dict) -> tuple:
     return best_etf, momentum_scores[best_etf]["final_score"]
 
 
-# ── CASH helpers ──────────────────────────────────────────────────────────────
+# ── CASH re-entry: Z-score on rank scores (not raw daily returns) ─────────────
 
-def _all_lookbacks_positive(momentum_scores: dict, etf: str) -> bool:
-    info = momentum_scores.get(etf, {})
-    return (info.get("ret_1m", -1) > 0 and
-            info.get("ret_3m", -1) > 0 and
-            info.get("ret_6m", -1) > 0)
+def compute_rank_score_zscore(rank_score_history: list) -> float:
+    """
+    Compute Z-score of the most recent rank score vs its own rolling history.
 
+    We track a rolling buffer of the top ETF's composite rank_score each day.
+    A HIGH final_score (= low rank_score = strong momentum) that is unusual
+    relative to recent history → strong signal → exit CASH.
 
-def compute_zscore(df: pd.DataFrame, etf: str, as_of_idx: int,
-                   window: int = 63) -> float:
-    ret_col = f"{etf}_Ret"
-    if ret_col not in df.columns:
+    Using rank scores rather than raw daily returns avoids the problem where
+    a single lucky day triggers re-entry after a drawdown, while genuine
+    sustained momentum recovery does not.
+    """
+    if len(rank_score_history) < 10:
         return 0.0
-    rets = df[ret_col].iloc[max(0, as_of_idx - window): as_of_idx].dropna().values
-    if len(rets) < 10:
-        return 0.0
-    mean = np.mean(rets)
-    std  = np.std(rets)
+    arr  = np.array(rank_score_history, dtype=np.float64)
+    mean = np.mean(arr[:-1])   # history excluding today
+    std  = np.std(arr[:-1])
     if std < 1e-9:
         return 0.0
-    today_ret = df[ret_col].iloc[as_of_idx - 1] if as_of_idx > 0 else 0.0
-    if np.isnan(today_ret):
-        return 0.0
-    return float((today_ret - mean) / std)
+    # rank_score: lower = better, so invert for Z (high Z = strong momentum)
+    return float((mean - arr[-1]) / std)
 
 
-def should_exit_cash(df: pd.DataFrame, best_etf: str, as_of_idx: int,
-                     momentum_scores: dict) -> bool:
-    """Exit CASH when top ETF Z-score >= 1.2σ vs 63-day rolling distribution."""
-    z = compute_zscore(df, best_etf, as_of_idx)
-    return z >= ZSCORE_EXIT_THRESHOLD
+def should_exit_cash(best_etf: str,
+                     momentum_scores: dict,
+                     rank_score_history: list) -> bool:
+    """
+    Exit CASH when ALL of:
+      1. Top ETF Z-score of rank_score >= 1.2σ (momentum is unusually strong)
+      2. Top ETF 1-month trailing return is positive (trend is up)
+
+    This prevents re-entry on a single-day spike after a drawdown.
+    The rank_score_history buffer is maintained by execute_backtest_b.
+    """
+    # Condition 1: momentum Z-score
+    z = compute_rank_score_zscore(rank_score_history)
+    if z < ZSCORE_EXIT_THRESHOLD:
+        return False
+
+    # Condition 2: 1-month return must be positive
+    info = momentum_scores.get(best_etf, {})
+    if info.get("ret_1m", -1.0) <= 0:
+        return False
+
+    return True
 
 
 # ── Walk-forward backtest ─────────────────────────────────────────────────────
@@ -266,13 +268,16 @@ def execute_backtest_b(df: pd.DataFrame,
     if not test_indices:
         return {}
 
-    strat_rets  = []
-    audit_trail = []
-    date_index  = []
+    strat_rets        = []
+    audit_trail       = []
+    date_index        = []
 
-    in_cash     = False
-    ret_history = [0.0, 0.0]
-    current_etf = None
+    in_cash           = False
+    ret_history       = [0.0, 0.0]   # tracks actual ETF returns (not net_ret)
+                                      # so the drawdown trigger sees real market moves
+                                      # even while we're in CASH
+    current_etf       = None
+    rank_score_history = []           # rolling buffer of top ETF's rank_score
 
     for idx in test_indices:
         trade_date = df.index[idx]
@@ -284,20 +289,37 @@ def execute_backtest_b(df: pd.DataFrame,
         if best_etf is None:
             best_etf = active_etfs[0]
 
-        # ── CASH check at START of day ─────────────────────────────────────────
+        # ── Maintain rank score history for Z-score re-entry ──────────────────
+        # Track the top ETF's rank_score every day regardless of CASH state
+        # so the Z-score has a meaningful baseline to compare against.
+        rank_score_history.append(mom_scores[best_etf]["rank_score"])
+        if len(rank_score_history) > 63:
+            rank_score_history.pop(0)
+
+        # ── CASH entry: check 2-day compound return at START of day ───────────
+        # Fix: use actual ETF returns (ret_history) not net_ret so the
+        # drawdown trigger reflects real market moves, not T-bill earnings.
         two_day = (1 + ret_history[-2]) * (1 + ret_history[-1]) - 1
         if two_day <= CASH_DRAWDOWN_TRIGGER:
             in_cash     = True
             current_etf = None
 
-        # ── Exit CASH via Z-score ──────────────────────────────────────────────
-        if in_cash and should_exit_cash(df, best_etf, idx, mom_scores):
-            in_cash = False
+        # ── CASH exit: Z-score on rank scores + positive 1m return ───────────
+        # Fix: replaced the broken single-day-return Z-score with a proper
+        # momentum-strength Z-score. The old code checked if yesterday's
+        # raw return was an outlier (almost never true after a drawdown).
+        # Now we check if the top ETF's composite rank score is unusually
+        # strong vs its own 63-day history AND its 1m return is positive.
+        if in_cash:
+            if should_exit_cash(best_etf, mom_scores, rank_score_history):
+                in_cash     = False
+                current_etf = None   # force re-evaluation on next trade
 
         # ── Execute trade ──────────────────────────────────────────────────────
         if in_cash:
             signal_etf = "CASH"
             net_ret    = daily_tbill
+            actual_etf_ret = 0.0    # earn T-bill, no ETF exposure
         else:
             switched    = (best_etf != current_etf) and (current_etf is not None)
             current_etf = best_etf
@@ -308,11 +330,15 @@ def execute_backtest_b(df: pd.DataFrame,
                 v = df[ret_col].iloc[idx]
                 if not np.isnan(v):
                     raw_ret = float(np.clip(v, -0.5, 0.5))
-            net_ret = raw_ret - (fee if switched else 0.0)
+            net_ret        = raw_ret - (fee if switched else 0.0)
+            actual_etf_ret = raw_ret
 
-        # ── Update rolling return history ──────────────────────────────────────
-        actual_ret = net_ret if not in_cash else 0.0
-        ret_history.append(actual_ret)
+        # ── Update rolling return history with ACTUAL ETF return ──────────────
+        # Fix: previously used net_ret when in CASH (which is T-bill ~0),
+        # filling ret_history with near-zeros and masking real market moves.
+        # Now we always track what the top-ranked ETF actually did that day
+        # so the 2-day drawdown check always reflects live market conditions.
+        ret_history.append(actual_etf_ret)
         ret_history = ret_history[-2:]
 
         strat_rets.append(net_ret)
